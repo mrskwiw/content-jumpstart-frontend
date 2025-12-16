@@ -1,9 +1,9 @@
 import axios, { type AxiosInstance, type InternalAxiosRequestConfig } from 'axios';
 import { setupMockInterceptor } from '@/mocks/handlers';
+import { getApiBaseUrl, getUseMocksEnabled } from '@/utils/env';
 
-// Use process.env which is available in both Jest and will be replaced by Vite at build time
-const API_URL = process.env.VITE_API_URL || 'http://localhost:8000';
-const USE_MOCKS = process.env.VITE_USE_MOCKS === 'true';
+const API_URL = getApiBaseUrl();
+const USE_MOCKS = getUseMocksEnabled();
 
 class ApiClient {
   private client: AxiosInstance;

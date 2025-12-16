@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { projectsApi } from '@/api/projects';
 import { deliverablesApi } from '@/api/deliverables';
 import { runsApi } from '@/api/runs';
+import { clientsApi } from '@/api/clients';
+import { getUseMocksEnabled } from '@/utils/env';
 import {
   FolderKanban,
   CheckCircle2,
@@ -10,7 +12,9 @@ import {
   TrendingUp,
   Sparkles,
   FileText,
-  Activity
+  Activity,
+  Users,
+  AlertCircle
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 
@@ -52,11 +56,15 @@ function StatCard({
 
 export default function Overview() {
   const navigate = useNavigate();
+  const mocksEnabled = getUseMocksEnabled();
 
-  const { data: projects = [] } = useQuery({
+  const { data: projectsResponse } = useQuery({
     queryKey: ['projects'],
     queryFn: () => projectsApi.list({}),
   });
+
+  // Extract projects from paginated response (Week 3 optimization)
+  const projects = projectsResponse?.items ?? [];
 
   const { data: deliverables = [] } = useQuery({
     queryKey: ['deliverables'],
@@ -68,6 +76,11 @@ export default function Overview() {
     queryFn: () => runsApi.list({}),
   });
 
+  const { data: clients = [] } = useQuery({
+    queryKey: ['clients'],
+    queryFn: () => clientsApi.list(),
+  });
+
   // Calculate metrics
   const totalProjects = projects.length;
   const activeProjects = projects.filter(p =>
@@ -77,6 +90,15 @@ export default function Overview() {
     p.status === 'delivered' || p.status === 'exported'
   ).length;
   const pendingDeliverables = deliverables.filter(d => d.status === 'ready').length;
+
+  // Client metrics
+  const totalClients = clients.length;
+  const clientsWithActiveProjects = new Set(
+    projects.filter(p => p.status !== 'delivered' && p.status !== 'exported').map(p => p.clientId)
+  ).size;
+  const clientsWithCompletedProjects = new Set(
+    projects.filter(p => p.status === 'delivered' || p.status === 'exported').map(p => p.clientId)
+  ).size;
 
   // Recent activity - combine projects and deliverables
   const recentActivity = [
@@ -200,6 +222,98 @@ export default function Overview() {
         </div>
       </div>
 
+      {/* Client Overview */}
+      <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900">Client Overview</h2>
+          <button
+            onClick={() => navigate('/dashboard/projects?view=clients')}
+            className="text-xs font-medium text-blue-600 hover:text-blue-700"
+          >
+            View All Clients →
+          </button>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-3">
+          <div className="rounded-lg border border-slate-100 bg-slate-50 p-4">
+            <div className="flex items-center gap-3">
+              <div className="rounded-lg bg-blue-100 p-2 text-blue-600">
+                <Users className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="text-sm font-medium text-slate-600">Total Clients</div>
+                <div className="text-2xl font-semibold text-slate-900">{totalClients}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-100 bg-slate-50 p-4">
+            <div className="flex items-center gap-3">
+              <div className="rounded-lg bg-amber-100 p-2 text-amber-600">
+                <Activity className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="text-sm font-medium text-slate-600">Active Projects</div>
+                <div className="text-2xl font-semibold text-slate-900">{clientsWithActiveProjects}</div>
+                <div className="text-xs text-slate-500">clients with work in progress</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-100 bg-slate-50 p-4">
+            <div className="flex items-center gap-3">
+              <div className="rounded-lg bg-emerald-100 p-2 text-emerald-600">
+                <CheckCircle2 className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="text-sm font-medium text-slate-600">Completed</div>
+                <div className="text-2xl font-semibold text-slate-900">{clientsWithCompletedProjects}</div>
+                <div className="text-xs text-slate-500">clients with delivered work</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Top clients list */}
+        {clients.length > 0 && (
+          <div className="mt-4 border-t border-slate-100 pt-4">
+            <h3 className="mb-3 text-sm font-semibold text-slate-700">Recent Clients</h3>
+            <div className="space-y-2">
+              {clients.slice(0, 5).map(client => {
+                const clientProjects = projects.filter(p => p.clientId === client.id);
+                const activeCount = clientProjects.filter(p =>
+                  p.status !== 'delivered' && p.status !== 'exported'
+                ).length;
+
+                return (
+                  <button
+                    key={client.id}
+                    onClick={() => navigate(`/dashboard/projects?clientId=${client.id}`)}
+                    className="flex w-full items-center justify-between rounded-md bg-white p-3 text-left transition-colors hover:bg-blue-50 hover:border-blue-200"
+                    title={`View projects for ${client.name}`}
+                  >
+                    <div>
+                      <div className="text-sm font-medium text-slate-900 hover:text-blue-700">{client.name}</div>
+                      {client.email && (
+                        <div className="text-xs text-slate-500">{client.email}</div>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm font-semibold text-slate-900">
+                        {clientProjects.length} {clientProjects.length === 1 ? 'project' : 'projects'}
+                      </div>
+                      {activeCount > 0 && (
+                        <div className="text-xs text-amber-600">{activeCount} active</div>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Recent Activity */}
       <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="mb-4 text-lg font-semibold text-slate-900">Recent Activity</h2>
@@ -269,7 +383,7 @@ export default function Overview() {
             <div className="flex items-center justify-between">
               <span className="text-sm text-slate-700">Mock Mode</span>
               <span className="text-xs font-semibold text-amber-700">
-                {process.env.VITE_USE_MOCKS === 'true' ? 'Enabled' : 'Disabled'}
+                {mocksEnabled ? 'Enabled' : 'Disabled'}
               </span>
             </div>
             <div className="flex items-center justify-between">

@@ -2,9 +2,10 @@ import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { deliverablesApi } from '@/api/deliverables';
 import type { Deliverable, DeliverableStatus, MarkDeliveredInput } from '@/types/domain';
-import { Filter, Link as LinkIcon, RefreshCw, CheckCircle } from 'lucide-react';
+import { Filter, Link as LinkIcon, RefreshCw, CheckCircle, X } from 'lucide-react';
 import { format } from 'date-fns';
 import { DeliverableDrawer } from '@/components/deliverables/DeliverableDrawer';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 
 function StatusChip({ status }: { status: DeliverableStatus }) {
   const map: Record<DeliverableStatus, string> = {
@@ -86,16 +87,30 @@ function MarkDeliveredDialog({ deliverable, onClose, onSubmit, isSubmitting }: M
 }
 
 export default function Deliverables() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const projectId = searchParams.get('projectId') || undefined;
+  const clientId = searchParams.get('clientId') || undefined;
+
   const [status, setStatus] = useState<DeliverableStatus | ''>('');
   const [selected, setSelected] = useState<Deliverable | null>(null);
   const qc = useQueryClient();
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['deliverables', { status }],
-    queryFn: () => deliverablesApi.list({ status: status || undefined }),
+    queryKey: ['deliverables', { status, projectId, clientId }],
+    queryFn: () => deliverablesApi.list({
+      status: status || undefined,
+      projectId,
+      clientId,
+    }),
   });
 
   const deliverables = data ?? [];
+
+  const clearFilters = () => {
+    setStatus('');
+    setSearchParams({});
+  };
 
   const groups = useMemo(() => {
     const map = new Map<string, Deliverable[]>();
@@ -125,10 +140,22 @@ export default function Deliverables() {
     <div className="space-y-4">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Deliverables</h1>
+          <h1 className="text-2xl font-semibold text-slate-900">
+            Deliverables
+            {projectId && <span className="text-base font-normal text-slate-600"> • Project {projectId}</span>}
+          </h1>
           <p className="text-sm text-slate-600">Track export outputs, statuses, and delivery proof.</p>
         </div>
         <div className="flex items-center gap-2">
+          {(projectId || clientId || status) && (
+            <button
+              onClick={clearFilters}
+              className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+            >
+              <X className="h-4 w-4" />
+              Clear Filters
+            </button>
+          )}
           <button
             onClick={() => refetch()}
             className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
@@ -168,7 +195,13 @@ export default function Deliverables() {
             <div key={`${group.clientId}-${group.projectId}`} className="rounded-lg border border-slate-200">
               <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3">
                 <div>
-                  <p className="text-sm font-semibold text-slate-900">Client {group.clientId}</p>
+                  <button
+                    onClick={() => navigate(`/dashboard/projects?clientId=${group.clientId}`)}
+                    className="text-sm font-semibold text-blue-600 hover:text-blue-700 hover:underline"
+                    title={`View all projects for client ${group.clientId}`}
+                  >
+                    Client {group.clientId}
+                  </button>
                   <p className="text-xs text-slate-500">Project {group.projectId}</p>
                 </div>
               </div>

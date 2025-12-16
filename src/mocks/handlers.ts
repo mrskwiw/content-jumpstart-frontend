@@ -4,13 +4,20 @@
 import type { AxiosInstance } from 'axios';
 import { mockProjects, mockDeliverables, mockPosts, mockRuns, mockClients } from './data';
 import type { Project, Deliverable, PostDraft, Run } from '@/types/domain';
+import { getUseMocksEnabled } from '@/utils/env';
 
-let mockEnabled = process.env.VITE_USE_MOCKS === 'true';
+let mockEnabled = getUseMocksEnabled();
 
+/**
+ * Enable or disable mock handling explicitly.
+ */
 export function setMockEnabled(enabled: boolean) {
   mockEnabled = enabled;
 }
 
+/**
+ * Check whether mocks are currently enabled.
+ */
 export function getMockEnabled() {
   return mockEnabled;
 }

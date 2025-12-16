@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { useLocation } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { WizardStepper } from '@/components/wizard/WizardStepper';
 import { ClientProfilePanel } from '@/components/wizard/ClientProfilePanel';
+import { ResearchPanel } from '@/components/wizard/ResearchPanel';
 import { TemplateSelectionPanel } from '@/components/wizard/TemplateSelectionPanel';
 import { GenerationPanel } from '@/components/wizard/GenerationPanel';
 import { QualityGatePanel } from '@/components/wizard/QualityGatePanel';
@@ -10,12 +11,14 @@ import { ExportPanel } from '@/components/wizard/ExportPanel';
 import { postsApi } from '@/api/posts';
 import { runsApi } from '@/api/runs';
 import { projectsApi } from '@/api/projects';
+import { clientsApi } from '@/api/clients';
 import type { ClientBrief } from '@/types/domain';
 
-type StepKey = 'profile' | 'templates' | 'generate' | 'quality' | 'export';
+type StepKey = 'profile' | 'research' | 'templates' | 'generate' | 'quality' | 'export';
 
 const steps: { key: StepKey; label: string }[] = [
   { key: 'profile', label: 'Client Profile' },
+  { key: 'research', label: 'Research' },
   { key: 'templates', label: 'Templates' },
   { key: 'generate', label: 'Generate' },
   { key: 'quality', label: 'Quality Gate' },
@@ -24,33 +27,103 @@ const steps: { key: StepKey; label: string }[] = [
 
 export default function Wizard() {
   const location = useLocation();
-  const projectId = (location.state as { projectId?: string })?.projectId || 'project-demo';
-  const clientId = (location.state as { clientId?: string })?.clientId || 'client-demo';
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+
+  const [projectId, setProjectId] = useState<string | null>(
+    (location.state as { projectId?: string })?.projectId || null
+  );
+  const [clientId, setClientId] = useState<string | null>(
+    (location.state as { clientId?: string })?.clientId || null
+  );
 
   const [activeStep, setActiveStep] = useState<StepKey>('profile');
   const [clientBrief, setClientBrief] = useState<ClientBrief | null>(null);
   const [selectedTemplates, setSelectedTemplates] = useState<number[]>([]);
-  const qc = useQueryClient();
+  const [isCreatingNewClient, setIsCreatingNewClient] = useState<boolean>(true);
+
+  // Query to list existing clients
+  const { data: existingClients } = useQuery({
+    queryKey: ['clients'],
+    queryFn: () => clientsApi.list(),
+  });
+
+  // Mutation to create client
+  const createClientMutation = useMutation({
+    mutationFn: (data: { name: string; email?: string }) => clientsApi.create(data),
+    onSuccess: (data) => {
+      setClientId(data.id);
+      qc.invalidateQueries({ queryKey: ['clients'] });
+    },
+  });
+
+  // Mutation to create project
+  const createProjectMutation = useMutation({
+    mutationFn: (data: { name: string; client_id: string; platforms?: string[]; tone?: string }) =>
+      projectsApi.create(data),
+    onSuccess: (data) => {
+      setProjectId(data.id);
+      qc.invalidateQueries({ queryKey: ['project', data.id] });
+    },
+  });
 
   const { data: project } = useQuery({
     queryKey: ['project', projectId],
-    queryFn: () => projectsApi.get(projectId),
+    queryFn: () => projectsApi.get(projectId!),
     enabled: !!projectId,
   });
 
   const { data: runs } = useQuery({
     queryKey: ['runs', { projectId }],
-    queryFn: () => runsApi.list({ projectId }),
+    queryFn: () => runsApi.list({ projectId: projectId! }),
     enabled: !!projectId,
   });
 
-  const { data: posts, refetch: refetchPosts } = useQuery({
+  const { data: postsResponse, refetch: refetchPosts } = useQuery({
     queryKey: ['posts', { projectId }],
-    queryFn: () => postsApi.list({ projectId }),
+    queryFn: () => postsApi.list({ projectId: projectId! }),
     enabled: !!projectId,
   });
 
-  const flagged = (posts ?? []).filter((p) => p.status === 'flagged' || (p.flags && p.flags.length > 0));
+  // Extract posts from paginated response (Week 3 optimization)
+  const posts = postsResponse?.items ?? [];
+  const flagged = posts.filter((p) => p.status === 'flagged' || (p.flags && p.flags.length > 0));
+
+  // Handler for saving client profile
+  const handleSaveProfile = async (brief: ClientBrief) => {
+    try {
+      let finalClientId = clientId;
+
+      // Create client if creating new, otherwise use existing clientId
+      if (isCreatingNewClient) {
+        const client = await createClientMutation.mutateAsync({
+          name: brief.companyName,
+          email: undefined, // Can be added to form later
+        });
+        finalClientId = client.id;
+      } else if (!clientId) {
+        alert('Please select an existing client or create a new one.');
+        return;
+      }
+
+      // Create project for this client
+      await createProjectMutation.mutateAsync({
+        name: `${brief.companyName} - Content Project`,
+        client_id: finalClientId,
+        platforms: brief.platforms,
+        tone: brief.tonePreference,
+      });
+
+      // Save brief locally
+      setClientBrief(brief);
+
+      // Move to next step
+      setActiveStep('research');
+    } catch (error) {
+      console.error('Failed to create project:', error);
+      alert('Failed to create project. Please try again.');
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -64,13 +137,83 @@ export default function Wizard() {
       <WizardStepper steps={steps} active={activeStep} onChange={(k) => setActiveStep(k as StepKey)} />
 
       {activeStep === 'profile' && (
-        <ClientProfilePanel
+        <div className="space-y-4">
+          {/* Client Selection */}
+          <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+            <h3 className="mb-4 text-lg font-semibold text-slate-900">Select Client</h3>
+
+            {/* Toggle between new and existing */}
+            <div className="mb-4 flex gap-2">
+              <button
+                onClick={() => setIsCreatingNewClient(true)}
+                className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+                  isCreatingNewClient
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                Create New Client
+              </button>
+              <button
+                onClick={() => setIsCreatingNewClient(false)}
+                className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+                  !isCreatingNewClient
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                Use Existing Client
+              </button>
+            </div>
+
+            {/* Existing client selector */}
+            {!isCreatingNewClient && (
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-800">
+                  Select Existing Client
+                </label>
+                <select
+                  value={clientId || ''}
+                  onChange={(e) => setClientId(e.target.value || null)}
+                  className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
+                >
+                  <option value="">-- Select a client --</option>
+                  {(existingClients || []).map((client) => (
+                    <option key={client.id} value={client.id}>
+                      {client.name}
+                    </option>
+                  ))}
+                </select>
+                {!clientId && (
+                  <p className="mt-1 text-xs text-slate-600">
+                    Select an existing client to continue
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* New client info */}
+            {isCreatingNewClient && (
+              <p className="text-sm text-slate-600">
+                A new client will be created from the company name in the profile below.
+              </p>
+            )}
+          </div>
+
+          {/* Client Profile Form */}
+          <ClientProfilePanel
+            projectId={projectId || undefined}
+            initialData={clientBrief || undefined}
+            onSave={handleSaveProfile}
+          />
+        </div>
+      )}
+
+      {activeStep === 'research' && projectId && clientId && (
+        <ResearchPanel
           projectId={projectId}
-          initialData={clientBrief || undefined}
-          onSave={(brief) => {
-            setClientBrief(brief);
-            setActiveStep('templates');
-          }}
+          clientId={clientId}
+          onContinue={() => setActiveStep('templates')}
         />
       )}
 
@@ -84,7 +227,7 @@ export default function Wizard() {
         />
       )}
 
-      {activeStep === 'generate' && (
+      {activeStep === 'generate' && projectId && clientId && (
         <div className="grid gap-4 lg:grid-cols-2">
           <GenerationPanel
             projectId={projectId}
@@ -105,7 +248,7 @@ export default function Wizard() {
         </div>
       )}
 
-      {activeStep === 'quality' && (
+      {activeStep === 'quality' && projectId && (
         <div className="space-y-4">
           <QualityGatePanel
             posts={posts ?? []}
@@ -126,7 +269,7 @@ export default function Wizard() {
         </div>
       )}
 
-      {activeStep === 'export' && (
+      {activeStep === 'export' && projectId && clientId && (
         <ExportPanel
           projectId={projectId}
           clientId={clientId}
@@ -140,7 +283,7 @@ export default function Wizard() {
         <h3 className="text-sm font-semibold text-slate-900">Wizard Status</h3>
         <div className="mt-2 space-y-1">
           <p className="text-xs text-slate-600">
-            <strong>Project:</strong> {project?.name || projectId}
+            <strong>Project:</strong> {project?.name || projectId || 'Not created'}
           </p>
           <p className="text-xs text-slate-600">
             <strong>Client Brief:</strong> {clientBrief ? '✓ Saved' : 'Not set'}

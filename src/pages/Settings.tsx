@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Settings as SettingsIcon, Server, Database, TestTube, Bell, Shield, Save } from 'lucide-react';
+import { getEnvConfig } from '@/utils/env';
 
 interface SettingsData {
   apiUrl: string;
@@ -11,10 +12,11 @@ interface SettingsData {
 }
 
 export default function Settings() {
+  const envConfig = getEnvConfig();
   const [settings, setSettings] = useState<SettingsData>({
-    apiUrl: process.env.VITE_API_URL || 'http://localhost:8000',
-    useMocks: process.env.VITE_USE_MOCKS === 'true',
-    debugMode: process.env.VITE_DEBUG_MODE === 'true',
+    apiUrl: envConfig.apiUrl,
+    useMocks: envConfig.useMocks,
+    debugMode: envConfig.debugMode,
     autoRefresh: localStorage.getItem('autoRefresh') === 'true',
     refreshInterval: parseInt(localStorage.getItem('refreshInterval') || '30000'),
     theme: (localStorage.getItem('theme') as 'light' | 'dark' | 'system') || 'system',
@@ -35,9 +37,9 @@ export default function Settings() {
 
   const handleReset = () => {
     setSettings({
-      apiUrl: process.env.VITE_API_URL || 'http://localhost:8000',
-      useMocks: process.env.VITE_USE_MOCKS === 'true',
-      debugMode: process.env.VITE_DEBUG_MODE === 'true',
+      apiUrl: envConfig.apiUrl,
+      useMocks: envConfig.useMocks,
+      debugMode: envConfig.debugMode,
       autoRefresh: false,
       refreshInterval: 30000,
       theme: 'system',
@@ -253,10 +255,10 @@ export default function Settings() {
       <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4">
         <h3 className="mb-2 text-sm font-semibold text-slate-900">Environment Variables</h3>
         <div className="space-y-1 font-mono text-xs text-slate-600">
-          <div>VITE_API_URL: {process.env.VITE_API_URL || 'not set'}</div>
-          <div>VITE_USE_MOCKS: {process.env.VITE_USE_MOCKS || 'not set'}</div>
-          <div>VITE_DEBUG_MODE: {process.env.VITE_DEBUG_MODE || 'not set'}</div>
-          <div>MODE: {process.env.MODE}</div>
+          <div>VITE_API_URL: {envConfig.apiUrl || 'not set'}</div>
+          <div>VITE_USE_MOCKS: {envConfig.useMocks ? 'true' : 'false'}</div>
+          <div>VITE_DEBUG_MODE: {envConfig.debugMode ? 'true' : 'false'}</div>
+          <div>MODE: {envConfig.mode}</div>
         </div>
       </div>
     </div>

@@ -40,6 +40,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const response = await authApi.login(credentials);
 
+      if (!response?.access_token || !response?.refresh_token || !response?.user) {
+        throw new Error('Login failed: response missing credentials or user data.');
+      }
+
       // Store tokens and user
       localStorage.setItem('access_token', response.access_token);
       localStorage.setItem('refresh_token', response.refresh_token);

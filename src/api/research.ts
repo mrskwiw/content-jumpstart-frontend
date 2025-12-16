@@ -5,6 +5,8 @@ export interface ResearchTool {
   label: string;
   price?: number;
   status?: 'available' | 'coming_soon';
+  description?: string;
+  category?: string;
 }
 
 export interface RunResearchInput {
@@ -17,6 +19,7 @@ export interface RunResearchInput {
 export interface ResearchRunResult {
   tool: string;
   outputs: Record<string, string>;
+  metadata?: Record<string, unknown>;
 }
 
 export const researchApi = {

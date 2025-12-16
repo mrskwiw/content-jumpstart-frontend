@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { getAuthErrorMessage } from '@/utils/errorMessages';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -20,7 +21,10 @@ export default function Login() {
       await login({ email, password });
       navigate('/dashboard');
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Invalid email or password');
+      const friendlyMessage = getAuthErrorMessage(err);
+      setError(friendlyMessage);
+      // Preserve a console trace for diagnostics without exposing internal errors to users
+      console.error('Login failed', err);
     } finally {
       setIsLoading(false);
     }
@@ -40,7 +44,11 @@ export default function Login() {
 
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+            <div
+              className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded"
+              role="alert"
+              aria-live="assertive"
+            >
               {error}
             </div>
           )}
