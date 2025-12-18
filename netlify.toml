@@ -1,7 +1,7 @@
 # Netlify Build Configuration
 [build]
   # Directory to change to before starting the build
-  base = "Project/operator-dashboard"
+  base = "."
 
   # Directory containing the deploy-ready HTML files and assets
   publish = "dist"
