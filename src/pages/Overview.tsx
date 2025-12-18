@@ -14,9 +14,15 @@ import {
   FileText,
   Activity,
   Users,
-  AlertCircle
+  AlertCircle,
+  Star,
+  DollarSign,
+  Calendar,
+  FileSearch,
+  ArrowRight,
+  AlertTriangle
 } from 'lucide-react';
-import { format, formatDistanceToNow } from 'date-fns';
+import { format, formatDistanceToNow, isAfter, addDays } from 'date-fns';
 
 function StatCard({
   title,
@@ -29,17 +35,18 @@ function StatCard({
   value: number | string;
   icon: any;
   trend?: string;
-  color?: 'blue' | 'emerald' | 'amber' | 'indigo';
+  color?: 'blue' | 'emerald' | 'amber' | 'indigo' | 'purple';
 }) {
   const colors = {
     blue: 'bg-blue-50 text-blue-600',
     emerald: 'bg-emerald-50 text-emerald-600',
     amber: 'bg-amber-50 text-amber-600',
     indigo: 'bg-indigo-50 text-indigo-600',
+    purple: 'bg-purple-50 text-purple-600',
   };
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+    <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm hover:shadow-md transition-shadow">
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm font-medium text-slate-600">{title}</p>
@@ -63,7 +70,7 @@ export default function Overview() {
     queryFn: () => projectsApi.list({}),
   });
 
-  // Extract projects from paginated response (Week 3 optimization)
+  // Extract projects from paginated response
   const projects = projectsResponse?.items ?? [];
 
   const { data: deliverables = [] } = useQuery({
@@ -85,22 +92,77 @@ export default function Overview() {
   const totalProjects = projects.length;
   const activeProjects = projects.filter(p =>
     p.status === 'generating' || p.status === 'qa' || p.status === 'ready'
-  ).length;
+  );
+  const activeProjectsCount = activeProjects.length;
   const completedProjects = projects.filter(p =>
     p.status === 'delivered' || p.status === 'exported'
   ).length;
   const pendingDeliverables = deliverables.filter(d => d.status === 'ready').length;
 
+  // NEW: Calculate quality score (average of recent runs)
+  const recentRuns = runs.slice(-10); // Last 10 runs
+  const avgQualityScore = recentRuns.length > 0
+    ? Math.round((recentRuns.reduce((sum, run) => sum + (run.qualityScore || 0), 0) / recentRuns.length) * 100) / 100
+    : 0;
+
+  // NEW: Calculate revenue (mock data for now - would come from billing API)
+  const mockMonthlyRevenue = completedProjects * 1800; // Avg $1,800/project
+
   // Client metrics
   const totalClients = clients.length;
-  const clientsWithActiveProjects = new Set(
-    projects.filter(p => p.status !== 'delivered' && p.status !== 'exported').map(p => p.clientId)
-  ).size;
-  const clientsWithCompletedProjects = new Set(
-    projects.filter(p => p.status === 'delivered' || p.status === 'exported').map(p => p.clientId)
-  ).size;
 
-  // Recent activity - combine projects and deliverables
+  // NEW: Content in review count (projects in QA status)
+  const contentInReview = projects.filter(p => p.status === 'qa').length;
+  const oldestReviewItem = projects
+    .filter(p => p.status === 'qa' && p.lastRunAt)
+    .sort((a, b) => new Date(a.lastRunAt!).getTime() - new Date(b.lastRunAt!).getTime())[0];
+  const oldestReviewAge = oldestReviewItem
+    ? formatDistanceToNow(new Date(oldestReviewItem.lastRunAt!), { addSuffix: true })
+    : '';
+
+  // NEW: Pending tasks with priorities
+  const pendingTasks = [
+    ...projects
+      .filter(p => p.status === 'qa')
+      .map(p => ({
+        id: `review-${p.id}`,
+        type: 'review' as const,
+        priority: 'high' as const,
+        title: `Review content for ${p.name}`,
+        project: p.name,
+        dueIn: '2 hours',
+        projectId: p.id
+      })),
+    ...deliverables
+      .filter(d => d.status === 'ready')
+      .slice(0, 3)
+      .map(d => ({
+        id: `approve-${d.id}`,
+        type: 'approve' as const,
+        priority: 'medium' as const,
+        title: `Approve deliverable`,
+        project: d.projectId,
+        dueIn: '1 day',
+        deliverableId: d.id
+      })),
+    ...projects
+      .filter(p => p.status === 'ready')
+      .slice(0, 2)
+      .map(p => ({
+        id: `deliver-${p.id}`,
+        type: 'deliver' as const,
+        priority: 'high' as const,
+        title: `Deliver to client`,
+        project: p.name,
+        dueIn: '4 hours',
+        projectId: p.id
+      }))
+  ].sort((a, b) => {
+    const priorityOrder = { high: 0, medium: 1, low: 2 };
+    return priorityOrder[a.priority] - priorityOrder[b.priority];
+  }).slice(0, 5);
+
+  // Enhanced recent activity with more context
   const recentActivity = [
     ...projects
       .filter(p => p.lastRunAt)
@@ -108,8 +170,10 @@ export default function Overview() {
         type: 'project' as const,
         id: p.id,
         name: p.name,
-        action: p.status === 'delivered' ? 'delivered' : 'updated',
+        action: p.status === 'delivered' ? 'delivered' : `moved to ${p.status}`,
         timestamp: new Date(p.lastRunAt!),
+        user: 'System', // Would come from audit log
+        target: p.name
       })),
     ...deliverables
       .filter(d => d.deliveredAt)
@@ -119,55 +183,65 @@ export default function Overview() {
         name: d.projectId,
         action: 'marked delivered',
         timestamp: new Date(d.deliveredAt!),
+        user: 'Operator', // Would come from audit log
+        target: d.projectId
       })),
   ]
     .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
-    .slice(0, 5);
+    .slice(0, 10); // Show last 10 instead of 5
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <header>
-        <h1 className="text-2xl font-semibold text-slate-900">Overview</h1>
+        <h1 className="text-2xl font-semibold text-slate-900">Dashboard Overview</h1>
         <p className="text-sm text-slate-600">
-          Dashboard overview of projects, deliverables, and recent activity.
+          Real-time operational metrics, pending tasks, and recent activity.
         </p>
       </header>
 
-      {/* Stats Grid */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      {/* Stats Grid - 5 metrics */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
         <StatCard
-          title="Total Projects"
-          value={totalProjects}
+          title="Active Projects"
+          value={activeProjectsCount}
           icon={FolderKanban}
           color="blue"
-          trend={`${activeProjects} active`}
+          trend={`${totalProjects} total`}
         />
         <StatCard
-          title="Completed"
-          value={completedProjects}
-          icon={CheckCircle2}
-          color="emerald"
-          trend={`${Math.round((completedProjects / totalProjects) * 100) || 0}% completion rate`}
+          title="Content in Review"
+          value={contentInReview}
+          icon={FileSearch}
+          color="amber"
+          trend={oldestReviewAge ? `Oldest: ${oldestReviewAge}` : ''}
         />
         <StatCard
-          title="Pending Delivery"
+          title="Deliveries Due Today"
           value={pendingDeliverables}
           icon={Clock}
-          color="amber"
+          color="indigo"
         />
         <StatCard
-          title="Total Runs"
-          value={runs.length}
-          icon={TrendingUp}
-          color="indigo"
+          title="Quality Score"
+          value={avgQualityScore ? `${avgQualityScore}%` : 'N/A'}
+          icon={Star}
+          color="purple"
+          trend="Average across recent projects"
+        />
+        <StatCard
+          title="Revenue This Month"
+          value={`$${mockMonthlyRevenue.toLocaleString()}`}
+          icon={DollarSign}
+          color="emerald"
+          trend={`${completedProjects} completed`}
         />
       </div>
 
-      {/* Quick Actions */}
+      {/* Quick Actions - 5 actions */}
       <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="mb-4 text-lg font-semibold text-slate-900">Quick Actions</h2>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <button
             onClick={() => navigate('/dashboard/wizard')}
             className="flex items-center gap-3 rounded-lg border border-slate-200 p-4 text-left transition-colors hover:border-blue-600 hover:bg-blue-50"
@@ -176,8 +250,8 @@ export default function Overview() {
               <Sparkles className="h-5 w-5" />
             </div>
             <div>
-              <div className="font-semibold text-slate-900">Start Wizard</div>
-              <div className="text-xs text-slate-600">Create new project</div>
+              <div className="font-semibold text-slate-900">New Project</div>
+              <div className="text-xs text-slate-600">Start wizard</div>
             </div>
           </button>
 
@@ -190,131 +264,210 @@ export default function Overview() {
             </div>
             <div>
               <div className="font-semibold text-slate-900">View Projects</div>
-              <div className="text-xs text-slate-600">{totalProjects} total projects</div>
+              <div className="text-xs text-slate-600">{totalProjects} total</div>
             </div>
           </button>
 
           <button
-            onClick={() => navigate('/dashboard/deliverables')}
+            onClick={() => navigate('/dashboard/content')}
+            className="flex items-center gap-3 rounded-lg border border-slate-200 p-4 text-left transition-colors hover:border-purple-600 hover:bg-purple-50"
+          >
+            <div className="rounded-lg bg-purple-100 p-2 text-purple-600">
+              <FileSearch className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="font-semibold text-slate-900">Review Content</div>
+              <div className="text-xs text-slate-600">{contentInReview} pending</div>
+            </div>
+          </button>
+
+          <button
+            onClick={() => navigate('/dashboard/analytics')}
             className="flex items-center gap-3 rounded-lg border border-slate-200 p-4 text-left transition-colors hover:border-indigo-600 hover:bg-indigo-50"
           >
             <div className="rounded-lg bg-indigo-100 p-2 text-indigo-600">
-              <FileText className="h-5 w-5" />
+              <Activity className="h-5 w-5" />
             </div>
             <div>
-              <div className="font-semibold text-slate-900">Deliverables</div>
-              <div className="text-xs text-slate-600">{pendingDeliverables} pending</div>
+              <div className="font-semibold text-slate-900">View Analytics</div>
+              <div className="text-xs text-slate-600">Performance</div>
             </div>
           </button>
 
           <button
-            onClick={() => navigate('/dashboard/settings')}
+            onClick={() => navigate('/dashboard/calendar')}
             className="flex items-center gap-3 rounded-lg border border-slate-200 p-4 text-left transition-colors hover:border-amber-600 hover:bg-amber-50"
           >
             <div className="rounded-lg bg-amber-100 p-2 text-amber-600">
-              <Activity className="h-4 w-4" />
+              <Calendar className="h-5 w-5" />
             </div>
             <div>
-              <div className="font-semibold text-slate-900">Settings</div>
-              <div className="text-xs text-slate-600">Configure system</div>
+              <div className="font-semibold text-slate-900">View Calendar</div>
+              <div className="text-xs text-slate-600">Schedules</div>
             </div>
           </button>
         </div>
       </div>
 
-      {/* Client Overview */}
+      {/* Active Projects - Top 5 with details */}
       <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900">Client Overview</h2>
+          <h2 className="text-lg font-semibold text-slate-900">Active Projects</h2>
           <button
-            onClick={() => navigate('/dashboard/projects?view=clients')}
-            className="text-xs font-medium text-blue-600 hover:text-blue-700"
+            onClick={() => navigate('/dashboard/projects')}
+            className="text-xs font-medium text-blue-600 hover:text-blue-700 flex items-center gap-1"
           >
-            View All Clients →
+            View All <ArrowRight className="h-3 w-3" />
           </button>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-3">
-          <div className="rounded-lg border border-slate-100 bg-slate-50 p-4">
-            <div className="flex items-center gap-3">
-              <div className="rounded-lg bg-blue-100 p-2 text-blue-600">
-                <Users className="h-5 w-5" />
-              </div>
-              <div>
-                <div className="text-sm font-medium text-slate-600">Total Clients</div>
-                <div className="text-2xl font-semibold text-slate-900">{totalClients}</div>
-              </div>
-            </div>
-          </div>
+        {activeProjects.length === 0 ? (
+          <p className="text-sm text-slate-500">No active projects</p>
+        ) : (
+          <div className="space-y-4">
+            {activeProjects.slice(0, 5).map(project => {
+              // Calculate progress based on status
+              const statusProgress = {
+                draft: 10,
+                generating: 40,
+                qa: 70,
+                ready: 90,
+                exported: 100,
+                delivered: 100
+              }[project.status] || 0;
 
-          <div className="rounded-lg border border-slate-100 bg-slate-50 p-4">
-            <div className="flex items-center gap-3">
-              <div className="rounded-lg bg-amber-100 p-2 text-amber-600">
-                <Activity className="h-5 w-5" />
-              </div>
-              <div>
-                <div className="text-sm font-medium text-slate-600">Active Projects</div>
-                <div className="text-2xl font-semibold text-slate-900">{clientsWithActiveProjects}</div>
-                <div className="text-xs text-slate-500">clients with work in progress</div>
-              </div>
-            </div>
-          </div>
+              // Determine next action
+              const nextAction = {
+                draft: 'Start generation',
+                generating: 'Wait for completion',
+                qa: 'Review quality',
+                ready: 'Deliver to client',
+                exported: 'Mark as delivered',
+                delivered: 'Complete'
+              }[project.status] || 'Review status';
 
-          <div className="rounded-lg border border-slate-100 bg-slate-50 p-4">
-            <div className="flex items-center gap-3">
-              <div className="rounded-lg bg-emerald-100 p-2 text-emerald-600">
-                <CheckCircle2 className="h-5 w-5" />
-              </div>
-              <div>
-                <div className="text-sm font-medium text-slate-600">Completed</div>
-                <div className="text-2xl font-semibold text-slate-900">{clientsWithCompletedProjects}</div>
-                <div className="text-xs text-slate-500">clients with delivered work</div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Top clients list */}
-        {clients.length > 0 && (
-          <div className="mt-4 border-t border-slate-100 pt-4">
-            <h3 className="mb-3 text-sm font-semibold text-slate-700">Recent Clients</h3>
-            <div className="space-y-2">
-              {clients.slice(0, 5).map(client => {
-                const clientProjects = projects.filter(p => p.clientId === client.id);
-                const activeCount = clientProjects.filter(p =>
-                  p.status !== 'delivered' && p.status !== 'exported'
-                ).length;
-
-                return (
-                  <button
-                    key={client.id}
-                    onClick={() => navigate(`/dashboard/projects?clientId=${client.id}`)}
-                    className="flex w-full items-center justify-between rounded-md bg-white p-3 text-left transition-colors hover:bg-blue-50 hover:border-blue-200"
-                    title={`View projects for ${client.name}`}
-                  >
-                    <div>
-                      <div className="text-sm font-medium text-slate-900 hover:text-blue-700">{client.name}</div>
-                      {client.email && (
-                        <div className="text-xs text-slate-500">{client.email}</div>
-                      )}
+              return (
+                <button
+                  key={project.id}
+                  onClick={() => navigate(`/dashboard/projects/${project.id}`)}
+                  className="w-full rounded-lg border border-slate-200 p-4 text-left transition-all hover:border-blue-300 hover:shadow-md"
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex-1">
+                      <div className="font-semibold text-slate-900 hover:text-blue-700">
+                        {project.name}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-1">
+                        Client: {project.clientId}
+                      </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-sm font-semibold text-slate-900">
-                        {clientProjects.length} {clientProjects.length === 1 ? 'project' : 'projects'}
-                      </div>
-                      {activeCount > 0 && (
-                        <div className="text-xs text-amber-600">{activeCount} active</div>
-                      )}
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize
+                        ${project.status === 'qa' ? 'bg-amber-100 text-amber-800' : ''}
+                        ${project.status === 'generating' ? 'bg-blue-100 text-blue-800' : ''}
+                        ${project.status === 'ready' ? 'bg-emerald-100 text-emerald-800' : ''}
+                      `}>
+                        {project.status}
+                      </span>
                     </div>
-                  </button>
-                );
-              })}
-            </div>
+                  </div>
+
+                  {/* Progress bar */}
+                  <div className="mb-3">
+                    <div className="flex justify-between text-xs text-slate-600 mb-1">
+                      <span>Progress</span>
+                      <span>{statusProgress}%</span>
+                    </div>
+                    <div className="w-full bg-slate-200 rounded-full h-2">
+                      <div
+                        className="bg-blue-600 h-2 rounded-full transition-all"
+                        style={{ width: `${statusProgress}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-4">
+                      <span className="text-slate-600">
+                        Next: <span className="font-medium text-slate-900">{nextAction}</span>
+                      </span>
+                    </div>
+                    {project.lastRunAt && (
+                      <span className="text-slate-500">
+                        Updated {formatDistanceToNow(new Date(project.lastRunAt), { addSuffix: true })}
+                      </span>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
 
-      {/* Recent Activity */}
+      {/* Pending Tasks - Sorted by priority */}
+      <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900">Pending Tasks</h2>
+          <span className="text-xs font-medium text-slate-600">
+            Sorted by Priority
+          </span>
+        </div>
+
+        {pendingTasks.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-8">
+            <CheckCircle2 className="h-12 w-12 text-emerald-500 mb-2" />
+            <p className="text-sm font-medium text-slate-900">All caught up!</p>
+            <p className="text-xs text-slate-500">No pending tasks</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {pendingTasks.map(task => (
+              <button
+                key={task.id}
+                onClick={() => {
+                  if (task.type === 'review' && task.projectId) {
+                    navigate(`/dashboard/projects/${task.projectId}`);
+                  } else if (task.type === 'approve' || task.type === 'deliver') {
+                    navigate('/dashboard/deliverables');
+                  }
+                }}
+                className="w-full flex items-center justify-between p-3 rounded-lg border border-slate-200 hover:border-blue-300 hover:bg-blue-50 transition-colors text-left"
+              >
+                <div className="flex items-center gap-3">
+                  {task.priority === 'high' ? (
+                    <AlertTriangle className="h-4 w-4 text-red-500" />
+                  ) : (
+                    <Clock className="h-4 w-4 text-amber-500" />
+                  )}
+                  <div>
+                    <div className="text-sm font-medium text-slate-900">
+                      {task.title}
+                    </div>
+                    <div className="text-xs text-slate-600">
+                      Project: {task.project}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className={`text-xs font-semibold uppercase
+                    ${task.priority === 'high' ? 'text-red-600' : ''}
+                    ${task.priority === 'medium' ? 'text-amber-600' : ''}
+                    ${task.priority === 'low' ? 'text-slate-600' : ''}
+                  `}>
+                    {task.priority}
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    Due in {task.dueIn}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Recent Activity - Enhanced with 10 items */}
       <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="mb-4 text-lg font-semibold text-slate-900">Recent Activity</h2>
         {recentActivity.length === 0 ? (
@@ -338,9 +491,9 @@ export default function Overview() {
                   )}
                   <div>
                     <div className="text-sm font-medium text-slate-900">
-                      {item.type === 'project' ? 'Project' : 'Deliverable'} {item.action}
+                      {item.user} {item.action}
                     </div>
-                    <div className="text-xs text-slate-600">{item.name}</div>
+                    <div className="text-xs text-slate-600">{item.target}</div>
                   </div>
                 </div>
                 <div className="text-xs text-slate-500">
@@ -350,50 +503,6 @@ export default function Overview() {
             ))}
           </div>
         )}
-      </div>
-
-      {/* Status Summary */}
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-          <h3 className="mb-3 text-sm font-semibold text-slate-900">Project Status Breakdown</h3>
-          <div className="space-y-2">
-            {['draft', 'generating', 'qa', 'ready', 'exported', 'delivered'].map(status => {
-              const count = projects.filter(p => p.status === status).length;
-              if (count === 0) return null;
-              return (
-                <div key={status} className="flex items-center justify-between text-sm">
-                  <span className="capitalize text-slate-700">{status}</span>
-                  <span className="font-semibold text-slate-900">{count}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-          <h3 className="mb-3 text-sm font-semibold text-slate-900">System Health</h3>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-slate-700">API Status</span>
-              <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
-                <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
-                Online
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-slate-700">Mock Mode</span>
-              <span className="text-xs font-semibold text-amber-700">
-                {mocksEnabled ? 'Enabled' : 'Disabled'}
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-slate-700">Last Updated</span>
-              <span className="text-xs text-slate-600">
-                {format(new Date(), 'PPp')}
-              </span>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   );
