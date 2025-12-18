@@ -4,6 +4,8 @@ import { projectsApi } from '@/api/projects';
 import { deliverablesApi } from '@/api/deliverables';
 import { runsApi } from '@/api/runs';
 import { clientsApi } from '@/api/clients';
+import type { Project, Deliverable, Run, Client } from '@/types/domain';
+import type { PaginatedResponse } from '@/types/pagination';
 import { getUseMocksEnabled } from '@/utils/env';
 import {
   FolderKanban,
@@ -65,7 +67,7 @@ export default function Overview() {
   const navigate = useNavigate();
   const mocksEnabled = getUseMocksEnabled();
 
-  const { data: projectsResponse } = useQuery({
+  const { data: projectsResponse } = useQuery<PaginatedResponse<Project>>({
     queryKey: ['projects'],
     queryFn: () => projectsApi.list({}),
   });
@@ -73,22 +75,24 @@ export default function Overview() {
   // Extract projects from paginated response
   const projects = projectsResponse?.items ?? [];
 
-  const { data: deliverables = [] } = useQuery({
+  const { data: deliverablesResponse } = useQuery<Deliverable[]>({
     queryKey: ['deliverables'],
     queryFn: () => deliverablesApi.list({}),
   });
 
-  const { data: runs = [] } = useQuery({
+  const { data: runsResponse } = useQuery<Run[]>({
     queryKey: ['runs'],
     queryFn: () => runsApi.list({}),
   });
 
-  const { data: clients = [] } = useQuery({
+  const { data: clients = [] } = useQuery<Client[]>({
     queryKey: ['clients'],
     queryFn: () => clientsApi.list(),
   });
 
   // Calculate metrics
+  const deliverables: Deliverable[] = deliverablesResponse ?? [];
+  const runs: Run[] = runsResponse ?? [];
   const totalProjects = projects.length;
   const activeProjects = projects.filter(p =>
     p.status === 'generating' || p.status === 'qa' || p.status === 'ready'
@@ -102,7 +106,14 @@ export default function Overview() {
   // NEW: Calculate quality score (average of recent runs)
   const recentRuns = runs.slice(-10); // Last 10 runs
   const avgQualityScore = recentRuns.length > 0
-    ? Math.round((recentRuns.reduce((sum, run) => sum + (run.qualityScore || 0), 0) / recentRuns.length) * 100) / 100
+    ? Math.round(
+        (recentRuns.reduce((sum, run) => {
+          const quality = (run as { qualityScore?: number }).qualityScore ?? 0;
+          return sum + quality;
+        }, 0) /
+          recentRuns.length) *
+          100
+      ) / 100
     : 0;
 
   // NEW: Calculate revenue (mock data for now - would come from billing API)
@@ -333,7 +344,8 @@ export default function Overview() {
                 qa: 70,
                 ready: 90,
                 exported: 100,
-                delivered: 100
+                delivered: 100,
+                error: 0,
               }[project.status] || 0;
 
               // Determine next action
@@ -343,7 +355,8 @@ export default function Overview() {
                 qa: 'Review quality',
                 ready: 'Deliver to client',
                 exported: 'Mark as delivered',
-                delivered: 'Complete'
+                delivered: 'Complete',
+                error: 'Investigate error',
               }[project.status] || 'Review status';
 
               return (
@@ -450,11 +463,15 @@ export default function Overview() {
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className={`text-xs font-semibold uppercase
-                    ${task.priority === 'high' ? 'text-red-600' : ''}
-                    ${task.priority === 'medium' ? 'text-amber-600' : ''}
-                    ${task.priority === 'low' ? 'text-slate-600' : ''}
-                  `}>
+                  <div
+                    className={`text-xs font-semibold uppercase ${
+                      task.priority === 'high'
+                        ? 'text-red-600'
+                        : task.priority === 'medium'
+                          ? 'text-amber-600'
+                          : 'text-slate-600'
+                    }`}
+                  >
                     {task.priority}
                   </div>
                   <div className="text-xs text-slate-500">

@@ -12,7 +12,9 @@ import { postsApi } from '@/api/posts';
 import { runsApi } from '@/api/runs';
 import { projectsApi } from '@/api/projects';
 import { clientsApi } from '@/api/clients';
-import type { ClientBrief } from '@/types/domain';
+import type { ClientBrief, PostDraft } from '@/types/domain';
+import type { CreateProjectInput } from '@/api/projects';
+import type { PaginatedResponse } from '@/types/pagination';
 
 type StepKey = 'profile' | 'research' | 'templates' | 'generate' | 'quality' | 'export';
 
@@ -59,8 +61,7 @@ export default function Wizard() {
 
   // Mutation to create project
   const createProjectMutation = useMutation({
-    mutationFn: (data: { name: string; client_id: string; platforms?: string[]; tone?: string }) =>
-      projectsApi.create(data),
+    mutationFn: (data: CreateProjectInput) => projectsApi.create(data),
     onSuccess: (data) => {
       setProjectId(data.id);
       qc.invalidateQueries({ queryKey: ['project', data.id] });
@@ -79,7 +80,7 @@ export default function Wizard() {
     enabled: !!projectId,
   });
 
-  const { data: postsResponse, refetch: refetchPosts } = useQuery({
+  const { data: postsResponse, refetch: refetchPosts } = useQuery<PaginatedResponse<PostDraft>>({
     queryKey: ['posts', { projectId }],
     queryFn: () => postsApi.list({ projectId: projectId! }),
     enabled: !!projectId,
@@ -107,12 +108,20 @@ export default function Wizard() {
       }
 
       // Create project for this client
-      await createProjectMutation.mutateAsync({
+      if (!finalClientId) {
+        alert('Please select an existing client or create a new one.');
+        return;
+      }
+
+      const projectInput: CreateProjectInput = {
         name: `${brief.companyName} - Content Project`,
-        client_id: finalClientId,
-        platforms: brief.platforms,
-        tone: brief.tonePreference,
-      });
+        clientId: finalClientId,
+        platforms: brief.platforms ?? [],
+        templates: selectedTemplates.map(String),
+        tone: brief.tonePreference ?? undefined,
+      };
+
+      await createProjectMutation.mutateAsync(projectInput);
 
       // Save brief locally
       setClientBrief(brief);

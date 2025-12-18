@@ -22,6 +22,8 @@ import { format } from 'date-fns';
 import { postsApi } from '@/api/posts';
 import { projectsApi } from '@/api/projects';
 import { clientsApi } from '@/api/clients';
+import type { PostDraft, Project, Client } from '@/types/domain';
+import type { PaginatedResponse } from '@/types/pagination';
 
 type ViewMode = 'grid' | 'list' | 'full';
 type StatusFilter = 'all' | 'pending' | 'approved' | 'flagged' | 'archived';
@@ -35,7 +37,7 @@ interface PostWithContext {
   clientName?: string;
   platform?: string;
   templateId?: number;
-  wordCount: number;
+  wordCount?: number;
   qualityScore?: number;
   status?: string;
   createdAt?: string;
@@ -56,20 +58,23 @@ export default function ContentReview() {
   const [editContent, setEditContent] = useState('');
 
   // Fetch data
-  const { data: posts = [] } = useQuery({
+  const { data: postsResponse } = useQuery<PaginatedResponse<PostDraft>>({
     queryKey: ['posts'],
     queryFn: () => postsApi.list(),
   });
 
-  const { data: projects = [] } = useQuery({
+  const { data: projectsResponse } = useQuery<PaginatedResponse<Project>>({
     queryKey: ['projects'],
     queryFn: () => projectsApi.list(),
   });
 
-  const { data: clients = [] } = useQuery({
+  const { data: clients = [] } = useQuery<Client[]>({
     queryKey: ['clients'],
     queryFn: () => clientsApi.list(),
   });
+
+  const posts: PostDraft[] = postsResponse?.items ?? [];
+  const projects: Project[] = projectsResponse?.items ?? [];
 
   // Mock update mutation (replace with actual API call)
   const updatePostMutation = useMutation({
@@ -98,6 +103,7 @@ export default function ContentReview() {
         ...post,
         projectName: project?.name,
         clientName: client?.name,
+        wordCount: (post as { wordCount?: number }).wordCount ?? (post.content?.split(' ').length ?? 0),
         qualityScore,
         status: qualityScore > 85 ? 'approved' : qualityScore < 70 ? 'flagged' : 'pending',
       };

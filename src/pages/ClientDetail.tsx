@@ -25,6 +25,8 @@ import { clientsApi } from '@/api/clients';
 import { projectsApi } from '@/api/projects';
 import { postsApi } from '@/api/posts';
 import { deliverablesApi } from '@/api/deliverables';
+import type { Project, PostDraft, Deliverable } from '@/types/domain';
+import type { PaginatedResponse } from '@/types/pagination';
 
 type TabType = 'overview' | 'projects' | 'content' | 'deliverables' | 'billing' | 'communication';
 
@@ -42,22 +44,26 @@ export default function ClientDetail() {
   });
 
   // Fetch client projects
-  const { data: projects = [] } = useQuery({
+  const { data: projectsResponse } = useQuery<PaginatedResponse<Project>>({
     queryKey: ['projects'],
     queryFn: () => projectsApi.list(),
   });
 
   // Fetch all posts
-  const { data: posts = [] } = useQuery({
+  const { data: postsResponse } = useQuery<PaginatedResponse<PostDraft>>({
     queryKey: ['posts'],
     queryFn: () => postsApi.list(),
   });
 
   // Fetch deliverables
-  const { data: deliverables = [] } = useQuery({
+  const { data: deliverablesResponse } = useQuery<Deliverable[]>({
     queryKey: ['deliverables'],
     queryFn: () => deliverablesApi.list(),
   });
+
+  const projects: Project[] = projectsResponse?.items ?? [];
+  const posts: PostDraft[] = postsResponse?.items ?? [];
+  const deliverables: Deliverable[] = deliverablesResponse ?? [];
 
   if (clientLoading || !client) {
     return (
@@ -71,21 +77,21 @@ export default function ClientDetail() {
   }
 
   // Filter data for this client
-  const clientProjects = projects.filter(p => p.clientId === client.id);
-  const clientPosts = posts.filter(post =>
-    clientProjects.some(project => project.id === post.projectId)
+  const clientProjects = projects.filter((p) => p.clientId === client.id);
+  const clientPosts = posts.filter((post) =>
+    clientProjects.some((project) => project.id === post.projectId)
   );
-  const clientDeliverables = deliverables.filter(d =>
-    clientProjects.some(project => project.id === d.projectId)
+  const clientDeliverables = deliverables.filter((d) =>
+    clientProjects.some((project) => project.id === d.projectId)
   );
 
   // Calculate metrics
   const totalProjects = clientProjects.length;
-  const activeProjects = clientProjects.filter(p =>
-    p.status !== 'delivered' && p.status !== 'exported'
+  const activeProjects = clientProjects.filter(
+    (p) => p.status !== 'delivered' && p.status !== 'exported'
   ).length;
-  const completedProjects = clientProjects.filter(p =>
-    p.status === 'delivered' || p.status === 'exported'
+  const completedProjects = clientProjects.filter(
+    (p) => p.status === 'delivered' || p.status === 'exported'
   ).length;
   const totalRevenue = completedProjects * 1800; // Mock calculation
   const packageTier = completedProjects > 5 ? 'Premium' : completedProjects > 2 ? 'Professional' : 'Starter';
@@ -102,14 +108,19 @@ export default function ClientDetail() {
     { id: '3', type: 'email', subject: 'Deliverable sent', date: '2024-02-05', from: 'operator@company.com' },
   ];
 
-  const tabs = [
+  const tabs: {
+    id: TabType;
+    label: string;
+    icon: typeof User;
+    count?: number;
+  }[] = [
     { id: 'overview', label: 'Overview', icon: User },
     { id: 'projects', label: 'Projects', icon: FileText, count: totalProjects },
     { id: 'content', label: 'Content', icon: MessageSquare, count: clientPosts.length },
     { id: 'deliverables', label: 'Deliverables', icon: Download, count: clientDeliverables.length },
     { id: 'billing', label: 'Billing', icon: DollarSign },
     { id: 'communication', label: 'Communication', icon: Mail },
-  ] as const;
+  ];
 
   return (
     <div className="space-y-6">
@@ -424,16 +435,24 @@ export default function ClientDetail() {
                     </tr>
                   ) : (
                     clientProjects
-                      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                      .sort(
+                        (a, b) =>
+                          new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime()
+                      )
                       .map((project) => {
-                        const statusColors = {
+                        const statusColors: Record<Project['status'], string> = {
                           draft: 'bg-slate-100 text-slate-800',
                           generating: 'bg-blue-100 text-blue-800',
                           qa: 'bg-amber-100 text-amber-800',
                           ready: 'bg-emerald-100 text-emerald-800',
                           exported: 'bg-purple-100 text-purple-800',
                           delivered: 'bg-emerald-100 text-emerald-800',
+                          error: 'bg-rose-100 text-rose-800',
                         };
+
+                        const projectPostCount = clientPosts.filter(
+                          (post) => post.projectId === project.id
+                        ).length;
 
                         return (
                           <tr key={project.id} className="hover:bg-slate-50">
@@ -455,10 +474,10 @@ export default function ClientDetail() {
                               </span>
                             </td>
                             <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-900">
-                              {project.postsCount || 30}
+                              {projectPostCount}
                             </td>
                             <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">
-                              {format(new Date(project.createdAt), 'MMM d, yyyy')}
+                              {project.createdAt ? format(new Date(project.createdAt), 'MMM d, yyyy') : 'N/A'}
                             </td>
                             <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-900">
                               <span className="font-medium text-emerald-600">92%</span>
@@ -517,9 +536,11 @@ export default function ClientDetail() {
                   <div key={post.id} className="rounded-lg border border-slate-200 bg-white p-4 hover:shadow-md">
                     <div className="mb-2 flex items-center justify-between">
                       <span className="text-xs text-slate-600">
-                        {projects.find(p => p.id === post.projectId)?.name}
+                        {projects.find((p) => p.id === post.projectId)?.name}
                       </span>
-                      <span className="text-xs text-slate-500">{post.wordCount} words</span>
+                      <span className="text-xs text-slate-500">
+                        {(post as { wordCount?: number }).wordCount ?? (post.content?.split(' ').length ?? 0)} words
+                      </span>
                     </div>
                     <p className="line-clamp-4 text-sm text-slate-900">{post.content}</p>
                     <div className="mt-3 flex items-center justify-between border-t border-slate-200 pt-3">
@@ -579,7 +600,7 @@ export default function ClientDetail() {
                     clientDeliverables.map((deliverable) => (
                       <tr key={deliverable.id} className="hover:bg-slate-50">
                         <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-slate-900">
-                          {projects.find(p => p.id === deliverable.projectId)?.name}
+                          {projects.find((p) => p.id === deliverable.projectId)?.name}
                         </td>
                         <td className="whitespace-nowrap px-6 py-4">
                           <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-800">

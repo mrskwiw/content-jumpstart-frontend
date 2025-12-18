@@ -29,6 +29,10 @@ import { projectsApi } from '@/api/projects';
 import { clientsApi } from '@/api/clients';
 import { postsApi } from '@/api/posts';
 import { deliverablesApi } from '@/api/deliverables';
+import type { PostDraft, Project } from '@/types/domain';
+import type { PaginatedResponse } from '@/types/pagination';
+
+type PostWithMeta = PostDraft & { templateId?: string | number; wordCount?: number; createdAt?: string };
 
 type TabType = 'overview' | 'content' | 'quality' | 'deliverables' | 'revisions' | 'activity';
 type ContentView = 'grid' | 'list';
@@ -55,10 +59,12 @@ export default function ProjectDetail() {
   });
 
   // Fetch posts for this project
-  const { data: allPosts = [] } = useQuery({
+  const { data: postsResponse } = useQuery<PaginatedResponse<PostDraft>>({
     queryKey: ['posts'],
     queryFn: () => postsApi.list(),
   });
+
+  const allPosts: PostWithMeta[] = (postsResponse?.items ?? []) as PostWithMeta[];
 
   // Fetch deliverables
   const { data: allDeliverables = [] } = useQuery({
@@ -78,12 +84,15 @@ export default function ProjectDetail() {
   }
 
   const client = clients.find(c => c.id === project.clientId);
-  const projectPosts = allPosts.filter(p => p.projectId === project.id);
+  const projectPosts = allPosts.filter((p) => p.projectId === project.id);
   const projectDeliverables = allDeliverables.filter(d => d.projectId === project.id);
 
+  const safeFormatDate = (value?: string | null, fallback = 'Not available') =>
+    value ? format(new Date(value), 'MMM d, yyyy') : fallback;
+
   // Filter posts
-  const filteredPosts = useMemo(() => {
-    let filtered = projectPosts;
+  const filteredPosts = useMemo<PostWithMeta[]>(() => {
+    let filtered = projectPosts as PostWithMeta[];
 
     if (platformFilter !== 'all') {
       filtered = filtered.filter(p => p.platform === platformFilter);
@@ -132,23 +141,29 @@ export default function ProjectDetail() {
     { name: 'Posting_Schedule.csv', status: 'generated', format: 'CSV', size: '3 KB' },
   ];
 
-  const statusColors = {
+  const statusColors: Record<Project['status'], string> = {
     draft: 'bg-slate-100 text-slate-800',
     generating: 'bg-blue-100 text-blue-800',
     qa: 'bg-amber-100 text-amber-800',
     ready: 'bg-emerald-100 text-emerald-800',
     exported: 'bg-purple-100 text-purple-800',
     delivered: 'bg-emerald-100 text-emerald-800',
+    error: 'bg-rose-100 text-rose-800',
   };
 
-  const tabs = [
+  const tabs: {
+    id: TabType;
+    label: string;
+    icon: typeof FileText;
+    count?: number;
+  }[] = [
     { id: 'overview', label: 'Overview', icon: FileText },
     { id: 'content', label: 'Content', icon: LayoutGrid, count: projectPosts.length },
     { id: 'quality', label: 'Quality Report', icon: BarChart3 },
     { id: 'deliverables', label: 'Deliverables', icon: Download, count: projectDeliverables.length },
     { id: 'revisions', label: 'Revisions', icon: RefreshCw, count: mockRevisions.length },
     { id: 'activity', label: 'Activity Log', icon: Clock },
-  ] as const;
+  ];
 
   return (
     <div className="space-y-6">
@@ -194,11 +209,11 @@ export default function ProjectDetail() {
               </button>
               <span className="flex items-center gap-1">
                 <Calendar className="h-4 w-4" />
-                Created {format(new Date(project.createdAt), 'MMM d, yyyy')}
+                Created {safeFormatDate(project.createdAt)}
               </span>
               <span className="flex items-center gap-1">
                 <FileText className="h-4 w-4" />
-                {project.postsCount || 30} posts
+              {projectPosts.length} posts
               </span>
             </div>
           </div>
@@ -332,20 +347,20 @@ export default function ProjectDetail() {
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-slate-600">Created</span>
                     <span className="text-sm font-medium text-slate-900">
-                      {format(new Date(mockTimeline.created), 'MMM d, yyyy')}
+                      {safeFormatDate(mockTimeline.created)}
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-slate-600">Started</span>
                     <span className="text-sm font-medium text-slate-900">
-                      {format(new Date(mockTimeline.started), 'MMM d, yyyy')}
+                      {safeFormatDate(mockTimeline.started)}
                     </span>
                   </div>
                   {mockTimeline.completed && (
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-slate-600">Completed</span>
                       <span className="text-sm font-medium text-slate-900">
-                        {format(new Date(mockTimeline.completed), 'MMM d, yyyy')}
+                      {safeFormatDate(mockTimeline.completed)}
                       </span>
                     </div>
                   )}
@@ -353,7 +368,7 @@ export default function ProjectDetail() {
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-slate-600">Delivered</span>
                       <span className="text-sm font-medium text-emerald-600">
-                        {format(new Date(mockTimeline.delivered), 'MMM d, yyyy')}
+                        {safeFormatDate(mockTimeline.delivered)}
                       </span>
                     </div>
                   )}
@@ -960,7 +975,9 @@ export default function ProjectDetail() {
             </div>
 
             <div className="space-y-3">
-              {mockActivityLog.map((activity) => (
+              {mockActivityLog.map((activity) => {
+                const activityTimestamp = activity.timestamp ?? project.createdAt ?? new Date().toISOString();
+                return (
                 <div key={activity.id} className="rounded-lg border border-slate-200 bg-white p-4">
                   <div className="flex items-start gap-4">
                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100">
@@ -975,14 +992,15 @@ export default function ProjectDetail() {
                           )}
                         </div>
                         <span className="text-sm text-slate-500">
-                          {formatDistanceToNow(new Date(activity.timestamp), { addSuffix: true })}
+                          {formatDistanceToNow(new Date(activityTimestamp), { addSuffix: true })}
                         </span>
                       </div>
                       <p className="mt-2 text-xs text-slate-500">By: {activity.user}</p>
                     </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
