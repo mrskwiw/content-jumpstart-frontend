@@ -1,7 +1,7 @@
 # Netlify Build Configuration
 [build]
   # Directory to change to before starting the build
-  base = "."
+  base = "Project/operator-dashboard"
 
   # Directory containing the deploy-ready HTML files and assets
   publish = "dist"
@@ -13,6 +13,7 @@
 [build.environment]
   NODE_VERSION = "20"
   NPM_VERSION = "10"
+  PYTHON_VERSION = "3.12"
 
 # Redirect rules for SPA (Single Page Application)
 [[redirects]]
